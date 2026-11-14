@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Legion Tower RGB
-Comment=Control the fan and ambient lighting of Lenovo Legion Tower desktops
+Comment=Control the fan, ambient, logo and GPU lighting of Lenovo Legion Tower desktops
 Exec=legion-tower-rgb
 Icon=preferences-color-symbolic
 Categories=Settings;HardwareSettings;

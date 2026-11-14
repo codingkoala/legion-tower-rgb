@@ -1,0 +1,80 @@
+name: New model report
+description: Help add support for another Legion Tower (or another Lenovo OEM GPU)
+title: "[model] "
+labels: ["new-model"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Mapping a new model takes three things: hardware facts from Linux,
+        the WMI lighting table from Windows, and USB captures of Lenovo Vantage.
+        The step-by-step guide is in [docs/NEW_MODEL.md](https://github.com/codingkoala/legion-tower-rgb/blob/main/docs/NEW_MODEL.md).
+
+        **Do not use `--write` on a model that is not supported yet.** The
+        `report` and `detect` commands only read sysfs and never talk to the
+        hardware.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Name and machine type, as printed on the label or by `report`
+      placeholder: "e.g. Legion T7 34IRZ8, MT 90V7"
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Output of `legion-tower-rgb-cli report`
+      description: Reads sysfs only. Run it on Linux.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: lights
+    attributes:
+      label: Lights in Lenovo Vantage
+      description: >
+        Every light Vantage shows (e.g. ambient, CPU fan, front fans, logo, GPU)
+        and, for each, the effects it offers and whether it has color, speed and
+        brightness.
+    validations:
+      required: true
+
+  - type: textarea
+    id: wmi
+    attributes:
+      label: WMI lighting table (Windows)
+      description: |
+        In PowerShell:
+        `Get-CimInstance -Namespace root\WMI -ClassName LENOVO_LIGHTING_INFO_LIST | Format-List *`
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: captures
+    attributes:
+      label: USB captures
+      description: >
+        Attach the .pcapng files (zip them if GitHub refuses the extension) and,
+        for each one, the exact list of changes you made in Vantage, in order,
+        one setting at a time. Say which USB device number the lighting
+        controller has in the capture.
+      placeholder: |
+        lights.pcapng (controller = device 2.4):
+        AMBIENT brightness 4, 3, 2, 1
+        AMBIENT effect off, static, flicker, breath
+        CPU FAN speed 1, 2, 3, 4
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: What works already with this app, what does not, BIOS lighting settings, etc.
+    validations:
+      required: false

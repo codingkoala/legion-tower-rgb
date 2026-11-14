@@ -62,6 +62,39 @@ def cmd_gpu(args) -> int:
     return 0
 
 
+def cmd_report(_args) -> int:
+    """Hardware facts for a new-model report. Reads sysfs only: no device is opened."""
+    from pathlib import Path
+
+    from . import __version__, hidraw
+
+    def read(path: str) -> str:
+        try:
+            return Path(path).read_text().strip()
+        except OSError:
+            return "?"
+
+    print(f"legion-tower-rgb {__version__}")
+    print("== System")
+    for f in ("sys_vendor", "product_name", "product_version", "board_name", "bios_version"):
+        print(f"{f}: {read('/sys/class/dmi/id/' + f)}")
+    print("== Lenovo / ITE HID devices")
+    for i in hidraw.list_hidraw():
+        if i.vendor_id in (0x17EF, 0x048D):
+            reports = ", ".join(f"0x{r:02x} ({n} B)" for r, n in hidraw.feature_reports(i.descriptor).items())
+            print(f"{i.path} {i.vendor_id:04x}:{i.product_id:04x} {i.name}")
+            print(f"  feature reports: {reports or 'none'}")
+            print(f"  report descriptor: {i.descriptor.hex()}")
+    print("== GPUs")
+    for dev in sorted(Path("/sys/bus/pci/devices").iterdir()):
+        if read(str(dev / "class")).startswith("0x03"):
+            ids = [read(str(dev / f))[2:] for f in ("vendor", "device", "subsystem_vendor", "subsystem_device")]
+            print(f"{dev.name} {ids[0]}:{ids[1]} subsystem {ids[2]}:{ids[3]}")
+    adapter = gpu.find_adapter()
+    print(f"Lenovo NVIDIA I2C adapter: {adapter or 'none'}")
+    return 0
+
+
 def _target(key: str) -> protocol.Panel:
     """A panel, or a single zone wrapped as a one-zone panel."""
     if key in protocol.PANELS_BY_KEY:
@@ -106,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("detect", help="find the controller (reads sysfs only)").set_defaults(func=cmd_detect)
     sub.add_parser("status", help="read the current state from the controller").set_defaults(func=cmd_status)
+    sub.add_parser("report", help="hardware facts for a new-model report (reads sysfs only)").set_defaults(
+        func=cmd_report)
 
     targets = [p.key for p in protocol.PANELS] + [z.key for z in protocol.ZONES
                                                   if z.key not in protocol.PANELS_BY_KEY] + ["all"]

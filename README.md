@@ -19,11 +19,25 @@ on Linux, the part Lenovo Vantage handles on Windows. Python, GTK4/libadwaita GU
 
 ## Install
 
+Debian / Ubuntu: download the `.deb` from the
+[releases](https://github.com/codingkoala/legion-tower-rgb/releases) and
+
 ```sh
-sudo apt install python3-gi gir1.2-adw-1
+sudo apt install ./legion-tower-rgb_*_all.deb
+```
+
+It pulls in GTK4/libadwaita and installs the udev rule that gives the desktop
+user access to the lighting controller and the GPU's I2C port.
+
+From source:
+
+```sh
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1
 pip install --user .
 sudo ./install-udev.sh   # only needed for hardware writes
 ```
+
+Build the package yourself with `packaging/build-deb.sh` (needs only `dpkg-deb`).
 
 ## Usage
 
@@ -31,6 +45,7 @@ sudo ./install-udev.sh   # only needed for hardware writes
 legion-tower-rgb                                         # GUI
 legion-tower-rgb-cli detect                              # reads sysfs only
 legion-tower-rgb-cli status                              # reads the state from the controller
+legion-tower-rgb-cli report                              # hardware facts for a new-model issue
 legion-tower-rgb-cli set all breathing --color 00aaff    # dry run
 legion-tower-rgb-cli set cpu-fan static --write          # really sends
 legion-tower-rgb-cli gpu breathing --color 0000ff --speed 4 --write
@@ -41,6 +56,7 @@ legion-tower-rgb-cli gpu breathing --color 0000ff --speed 4 --write
 - [Feasibility study](docs/FEASIBILITY.md)
 - [Protocol notes](docs/PROTOCOL.md)
 - [GPU lighting](docs/GPU.md)
+- [Adding a new model](docs/NEW_MODEL.md)
 - [Reverse-engineering plan](docs/REVERSE_ENGINEERING.md)
 
 ## Credits
