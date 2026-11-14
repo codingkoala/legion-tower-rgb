@@ -20,7 +20,7 @@ from gi.repository import Gtk  # noqa: E402
 from . import protocol  # noqa: E402
 
 LEDS_PER_FAN = 12
-# Seconds per cycle for speed 1..4 (assumes 4 is the fastest).
+# Seconds per cycle for speed 1..4 (4 is the fastest, verified on hardware).
 PERIODS = {1: 6.0, 2: 4.0, 3: 2.5, 4: 1.5}
 CASE_W, CASE_H = 300.0, 340.0
 
@@ -50,8 +50,13 @@ class CasePreview(Gtk.DrawingArea):
         self.set_draw_func(self._draw)
         self.add_tick_callback(self._on_tick)
 
-    def set_states(self, states: dict[str, protocol.ZoneState]) -> None:
+    def set_states(self, states: dict[str, protocol.ZoneState], gpu_state=None) -> None:
         self.states = dict(states)
+        if gpu_state is not None:
+            # The GPU effects use the same names as the case effects.
+            self.states["gpu"] = protocol.ZoneState(protocol.EFFECTS_BY_KEY[gpu_state.effect.key],
+                                                    gpu_state.speed, gpu_state.brightness, gpu_state.rgb)
+            self.gpu_wordmark = gpu_state.wordmark
         self.queue_draw()
 
     def _on_tick(self, _widget, clock) -> bool:
@@ -129,6 +134,7 @@ class CasePreview(Gtk.DrawingArea):
         cr.fill()
 
         self._draw_ambient(cr)
+        self._draw_gpu(cr)
         for key, (x, y, r) in FANS.items():
             self._draw_fan(cr, key, x, y, r)
         self._draw_logo(cr)
@@ -163,6 +169,28 @@ class CasePreview(Gtk.DrawingArea):
             cr.set_source_rgb(*self._visible(color))
             cr.arc(lx, ly, max(2.0, r * 0.1), 0, 2 * math.pi)
             cr.fill()
+
+    def _draw_gpu(self, cr) -> None:
+        if "gpu" not in self.states:
+            return
+        x, y, w, h = 90, 200, 150, 30
+        cr.set_source_rgb(0.05, 0.05, 0.06)
+        self._rounded(cr, x, y, w, h, 3)
+        cr.fill()
+        segments = 14
+        for i in range(segments):
+            sx = x + 6 + i * ((w - 12) / segments)
+            color = self._led("gpu", i, segments, sx / CASE_W)
+            self._glow(cr, sx + 4, y + h - 3, 5, color)
+            cr.set_source_rgb(*self._visible(color))
+            cr.rectangle(sx, y + h - 4, (w - 12) / segments - 1, 2.5)
+            cr.fill()
+        on = getattr(self, "gpu_wordmark", True)
+        cr.set_source_rgb(*((0.95, 0.95, 0.95) if on else (0.2, 0.2, 0.22)))
+        cr.select_font_face("Sans", 0, 1)
+        cr.set_font_size(9)
+        cr.move_to(x + 8, y + 14)
+        cr.show_text("LEGION")
 
     def _draw_logo(self, cr) -> None:
         color = self._led("logo", 0, 1, 0.1)

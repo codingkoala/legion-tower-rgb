@@ -61,6 +61,8 @@ Captured sequence (zone, field: values) and matching bytes:
 ## Effects [capture]
 
 From `lights_fx.pcapng` (CPU fan, every effect Vantage offers, in order):
+All of them, and speeds 1 (slowest) to 4 (fastest), verified by eye from
+Linux on the T5 26ARA8 **[verified]**.
 
 | Vantage name | EE | Notes |
 |---|---|---|

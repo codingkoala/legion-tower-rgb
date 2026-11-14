@@ -1,2 +1,4 @@
 # Lenovo Legion Tower lighting controller (ITE IT8297, hidraw)
 KERNEL=="hidraw*", ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="c955", TAG+="uaccess"
+# GPU lighting (Lenovo OEM GeForce): I2C ports of the NVIDIA GPU only
+SUBSYSTEM=="i2c-dev", ATTR{name}=="NVIDIA i2c adapter*", TAG+="uaccess"

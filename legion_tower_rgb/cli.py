@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import config, device, protocol
+from . import config, device, gpu, protocol
 
 
 def _rgb(text: str) -> tuple[int, int, int]:
@@ -33,6 +33,32 @@ def cmd_status(_args) -> int:
         s = states[z.key]
         color = " #%02x%02x%02x" % s.rgb if s.effect.uses_color and z.key != "ambient" else ""
         print(f"  {z.title:17} {s.effect.title:21} speed {s.speed}  brightness {s.brightness}{color}")
+    return 0
+
+
+def cmd_gpu(args) -> int:
+    state = config.load_gpu()
+    if args.effect:
+        state.effect = gpu.EFFECTS_BY_KEY[args.effect]
+    for field in ("speed", "brightness"):
+        if getattr(args, field) is not None:
+            setattr(state, field, getattr(args, field))
+    if args.color is not None:
+        state.rgb = args.color
+    if args.wordmark is not None:
+        state.wordmark = args.wordmark == "on"
+    try:
+        transfers = gpu.build_all(state)
+        if args.write:
+            gpu.send(transfers)
+            config.save_gpu(state)
+        else:
+            print("Dry run (nothing is sent; add --write to send):")
+    except (gpu.GpuError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    for t in transfers:
+        print(f"  {gpu.format_transfer(t)}")
     return 0
 
 
@@ -93,6 +119,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="start from the state seen in the Vantage capture, not the saved one")
     p.add_argument("--write", action="store_true", help="really send the packets to the hardware")
     p.set_defaults(func=cmd_set)
+
+    g = sub.add_parser("gpu", help="GPU strip and wordmark (Lenovo OEM GeForce RTX 40)")
+    g.add_argument("effect", nargs="?", choices=list(gpu.EFFECTS_BY_KEY))
+    g.add_argument("--color", type=_rgb, help="RRGGBB")
+    g.add_argument("--speed", type=int)
+    g.add_argument("--brightness", type=int)
+    g.add_argument("--wordmark", choices=["on", "off"])
+    g.add_argument("--write", action="store_true", help="really send the transfers to the GPU")
+    g.set_defaults(func=cmd_gpu)
 
     args = parser.parse_args(argv)
     return args.func(args)

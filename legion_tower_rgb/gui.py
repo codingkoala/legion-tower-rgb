@@ -15,7 +15,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
-from . import config, device, protocol  # noqa: E402
+from . import config, device, gpu, protocol  # noqa: E402
 from .preview import CasePreview  # noqa: E402
 
 APP_ID = "io.github.codingkoala.LegionTowerRGB"
@@ -83,6 +83,57 @@ class PanelGroup(Adw.PreferencesGroup):
                                   brightness=int(self.brightness.get_value()), rgb=self.rgb)
 
 
+class GpuGroup(Adw.PreferencesGroup):
+    """Strip and wordmark of a Lenovo OEM GeForce RTX 40 card (separate controller)."""
+
+    def __init__(self, state: gpu.GpuState, adapter: str | None, on_change):
+        super().__init__(title="GPU",
+                         description=f"Graphics card lighting · {adapter}" if adapter else "No Lenovo GPU found")
+        self.effect_row = Adw.ComboRow(title="Effect", model=Gtk.StringList.new([e.title for e in gpu.EFFECTS]))
+        self.effect_row.set_selected(gpu.EFFECTS.index(state.effect))
+        self.effect_row.connect("notify::selected", lambda *_: (self._sync_sensitivity(), on_change()))
+        self.add(self.effect_row)
+
+        self.color_button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False),
+                                                  valign=Gtk.Align.CENTER)
+        color = Gdk.RGBA()
+        color.parse("#%02x%02x%02x" % state.rgb)
+        self.color_button.set_rgba(color)
+        self.color_button.connect("notify::rgba", lambda *_: on_change())
+        self.color_row = Adw.ActionRow(title="Color")
+        self.color_row.add_suffix(self.color_button)
+        self.add(self.color_row)
+
+        self.speed_row, self.speed = PanelGroup._scale_row(self, "Speed", gpu.SPEED_RANGE, state.speed)
+        self.brightness_row, self.brightness = PanelGroup._scale_row(self, "Brightness", gpu.BRIGHTNESS_RANGE,
+                                                                     state.brightness)
+        for scale in (self.speed, self.brightness):
+            scale.connect("value-changed", lambda *_: on_change())
+
+        self.wordmark = Adw.SwitchRow(title="Wordmark", active=state.wordmark)
+        self.wordmark.connect("notify::active", lambda *_: on_change())
+        self.add(self.wordmark)
+        self._sync_sensitivity()
+        self.set_sensitive(adapter is not None)
+
+    @property
+    def effect(self) -> gpu.GpuEffect:
+        return gpu.EFFECTS[self.effect_row.get_selected()]
+
+    def _sync_sensitivity(self) -> None:
+        e = self.effect
+        self.color_row.set_sensitive(e.uses_color)
+        self.speed_row.set_sensitive(e.uses_speed)
+        self.brightness_row.set_sensitive(e.uses_color)  # rainbow has no brightness
+
+    @property
+    def state(self) -> gpu.GpuState:
+        c = self.color_button.get_rgba()
+        rgb = tuple(round(v * 255) for v in (c.red, c.green, c.blue))
+        return gpu.GpuState(self.effect, int(self.speed.get_value()), int(self.brightness.get_value()),
+                            rgb, self.wordmark.get_active())  # type: ignore[arg-type]
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application):
         super().__init__(application=app, title="Legion Tower RGB", default_width=1100, default_height=820)
@@ -128,6 +179,9 @@ class Window(Adw.ApplicationWindow):
                        for p in protocol.PANELS]
         for g in self.groups:
             zones_page.add(g)
+        self.gpu_adapter = gpu.find_adapter()
+        self.gpu_group = GpuGroup(config.load_gpu(), self.gpu_adapter, self._on_controls_changed)
+        zones_page.add(self.gpu_group)
 
         preview = Adw.PreferencesGroup(title="Packets")
         self.preview = Gtk.Label(xalign=0, wrap=True, selectable=True, css_classes=["monospace", "dim-label"])
@@ -149,7 +203,8 @@ class Window(Adw.ApplicationWindow):
         if not hasattr(self, "groups") or len(self.groups) < len(protocol.PANELS):
             return  # still building the window
         try:
-            self.case.set_states(self._states_from_controls())
+            self.case.set_states(self._states_from_controls(),
+                                 self.gpu_group.state if hasattr(self, "gpu_group") else None)
         except ValueError:
             pass
 
@@ -179,16 +234,25 @@ class Window(Adw.ApplicationWindow):
 
     def _on_apply(self, _button) -> None:
         write = self.write_switch.get_active()
+        gpu_state = self.gpu_group.state
         try:
             states = self._states_from_controls()
             packets = device.apply(states, previous=self.states, allow_write=write)
-        except (device.DeviceError, ValueError) as exc:
+            transfers = gpu.build_all(gpu_state) if self.gpu_adapter else []
+            if write and transfers:
+                gpu.send(transfers, self.gpu_adapter)
+        except (device.DeviceError, gpu.GpuError, ValueError) as exc:
             self.toasts.add_toast(Adw.Toast(title=str(exc)))
             return
         if write:
             config.save_state(states)
             self.states = states
-        self.preview.set_label("\n".join(protocol.hexdump(p) for p in packets))
+            if transfers:
+                config.save_gpu(gpu_state)
+        lines = [protocol.hexdump(p) for p in packets]
+        if transfers:
+            lines += ["GPU (I2C 0x49):"] + [gpu.format_transfer(t) for t in transfers]
+        self.preview.set_label("\n".join(lines))
         self.toasts.add_toast(Adw.Toast(title="Sent to the controller" if write else "Preview only: nothing sent"))
 
 
