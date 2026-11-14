@@ -15,6 +15,7 @@ from .protocol import ZoneState
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "legion-tower-rgb"
 STATE_FILE = CONFIG_DIR / "state.json"
+_RENAMED_EFFECTS = {"rainbow-wave": "rainbow"}
 
 
 def load_state() -> dict[str, ZoneState]:
@@ -25,7 +26,8 @@ def load_state() -> dict[str, ZoneState]:
         return states
     for key, d in data.items():
         try:
-            states[key] = ZoneState(protocol.EFFECTS_BY_KEY[d["effect"]], int(d["speed"]),
+            effect = _RENAMED_EFFECTS.get(d["effect"], d["effect"])
+            states[key] = ZoneState(protocol.EFFECTS_BY_KEY[effect], int(d["speed"]),
                                     int(d["brightness"]), tuple(int(c) for c in d["rgb"]))
         except (KeyError, TypeError, ValueError):
             continue

@@ -2,6 +2,7 @@
 
 Starts in preview mode: Apply only shows the packets. Sending them to the
 hardware needs the "Hardware writes" switch, which asks for confirmation.
+One group per light as Vantage shows it (front and top fans are two zones each).
 """
 
 from __future__ import annotations
@@ -19,15 +20,16 @@ from . import config, device, protocol  # noqa: E402
 APP_ID = "io.github.codingkoala.LegionTowerRGB"
 
 
-class ZoneGroup(Adw.PreferencesGroup):
-    def __init__(self, zone: protocol.Zone, state: protocol.ZoneState):
-        title = zone.title if zone.verified else f"{zone.title} (unverified)"
-        super().__init__(title=title)
-        self.zone = zone
+class PanelGroup(Adw.PreferencesGroup):
+    def __init__(self, panel: protocol.Panel, state: protocol.ZoneState):
+        super().__init__(title=panel.title)
+        self.panel = panel
+        self.effects = protocol.effects_for(panel)
 
         self.effect_row = Adw.ComboRow(title="Effect",
-                                       model=Gtk.StringList.new([e.title for e in protocol.EFFECTS]))
-        self.effect_row.set_selected(protocol.EFFECTS.index(state.effect))
+                                       model=Gtk.StringList.new([e.title for e in self.effects]))
+        if state.effect in self.effects:
+            self.effect_row.set_selected(self.effects.index(state.effect))
         self.effect_row.connect("notify::selected", lambda *_: self._sync_sensitivity())
         self.add(self.effect_row)
 
@@ -38,6 +40,7 @@ class ZoneGroup(Adw.PreferencesGroup):
         self.color_button.set_rgba(color)
         self.color_row = Adw.ActionRow(title="Color")
         self.color_row.add_suffix(self.color_button)
+        self.color_row.set_visible(panel.has_color)
         self.add(self.color_row)
 
         self.speed_row, self.speed = self._scale_row("Speed", protocol.SPEED_RANGE, state.speed)
@@ -50,17 +53,17 @@ class ZoneGroup(Adw.PreferencesGroup):
         scale.set_digits(0)
         scale.set_draw_value(True)
         scale.set_hexpand(True)
+        scale.set_size_request(220, -1)
         for mark in range(bounds[0], bounds[1] + 1):
             scale.add_mark(mark, Gtk.PositionType.BOTTOM, None)
         row = Adw.ActionRow(title=title)
         row.add_suffix(scale)
-        scale.set_size_request(220, -1)
         self.add(row)
         return row, scale
 
     @property
     def effect(self) -> protocol.Effect:
-        return protocol.EFFECTS[self.effect_row.get_selected()]
+        return self.effects[self.effect_row.get_selected()]
 
     def _sync_sensitivity(self) -> None:
         self.color_row.set_sensitive(self.effect.uses_color)
@@ -71,15 +74,14 @@ class ZoneGroup(Adw.PreferencesGroup):
         c = self.color_button.get_rgba()
         return tuple(round(v * 255) for v in (c.red, c.green, c.blue))  # type: ignore[return-value]
 
-    @property
-    def state(self) -> protocol.ZoneState:
-        return protocol.ZoneState(self.effect, int(self.speed.get_value()),
-                                  int(self.brightness.get_value()), self.rgb)
+    def apply_to(self, states: dict[str, protocol.ZoneState]) -> dict[str, protocol.ZoneState]:
+        return protocol.set_panel(states, self.panel, effect=self.effect, speed=int(self.speed.get_value()),
+                                  brightness=int(self.brightness.get_value()), rgb=self.rgb)
 
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application):
-        super().__init__(application=app, title="Legion Tower RGB", default_width=560, default_height=760)
+        super().__init__(application=app, title="Legion Tower RGB", default_width=560, default_height=800)
         self.toasts = Adw.ToastOverlay()
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(Adw.HeaderBar())
@@ -94,14 +96,14 @@ class Window(Adw.ApplicationWindow):
         status.add(self.status_row)
         self.write_switch = Adw.SwitchRow(
             title="Hardware writes",
-            subtitle="Off: Apply only shows the packets. The protocol is only partly verified.")
+            subtitle="Off: Apply only shows the packets.")
         self.write_switch.connect("notify::active", self._on_write_toggled)
         status.add(self.write_switch)
         page.add(status)
 
-        saved = config.load_state()
-        self.zones = [ZoneGroup(z, saved[z.key]) for z in protocol.ZONES]
-        for g in self.zones:
+        self.states, self.state_source = device.current_state()
+        self.groups = [PanelGroup(p, self.states[p.zones[0]]) for p in protocol.PANELS]
+        for g in self.groups:
             page.add(g)
 
         preview = Adw.PreferencesGroup(title="Packets")
@@ -119,7 +121,8 @@ class Window(Adw.ApplicationWindow):
         found = device.find_controllers()
         if found:
             self.status_row.set_title(found[0].info.name)
-            self.status_row.set_subtitle(f"{found[0].info.path} · 17ef:c955")
+            source = "state read from the controller" if self.state_source == "device" else "last saved state"
+            self.status_row.set_subtitle(f"{found[0].info.path} · 17ef:c955 · {source}")
         else:
             self.status_row.set_title("Controller not found")
             self.status_row.set_subtitle("Preview mode only")
@@ -131,7 +134,7 @@ class Window(Adw.ApplicationWindow):
         dialog = Adw.AlertDialog(
             heading="Enable hardware writes?",
             body="Lighting commands will be sent to the controller. The protocol comes from "
-                 "USB captures of Lenovo Vantage and is only partly verified.")
+                 "USB captures of Lenovo Vantage on a Legion T5 26ARA8.")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("enable", "Enable")
         dialog.set_response_appearance("enable", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -140,14 +143,19 @@ class Window(Adw.ApplicationWindow):
 
     def _on_apply(self, _button) -> None:
         write = self.write_switch.get_active()
-        states = {g.zone.key: g.state for g in self.zones}
+        states = dict(self.states)
         try:
-            packets = device.apply(states, allow_write=write)
+            # Sync effects (wave, spectrum) spread to every zone: apply them last
+            # so the other groups do not overwrite them.
+            for g in sorted(self.groups, key=lambda g: g.effect.sync):
+                states = g.apply_to(states)
+            packets = device.apply(states, previous=self.states, allow_write=write)
         except (device.DeviceError, ValueError) as exc:
             self.toasts.add_toast(Adw.Toast(title=str(exc)))
             return
         if write:
             config.save_state(states)
+            self.states = states
         self.preview.set_label("\n".join(protocol.hexdump(p) for p in packets))
         self.toasts.add_toast(Adw.Toast(title="Sent to the controller" if write else "Preview only: nothing sent"))
 

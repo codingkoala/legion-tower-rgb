@@ -55,13 +55,13 @@ def find_controllers() -> list[Controller]:
 PACKET_GAP_S = 0.065
 
 
-def apply(states: dict[str, ZoneState], *, allow_write: bool = False,
-          controller: Controller | None = None) -> list[bytes]:
+def apply(states: dict[str, ZoneState], *, previous: dict[str, ZoneState] | None = None,
+          allow_write: bool = False, controller: Controller | None = None) -> list[bytes]:
     """Build the full update and, only if allow_write, send it.
 
     Returns the packets either way, so front ends can show what would be sent.
     """
-    packets = protocol.build_apply(states)
+    packets = protocol.build_apply(states, previous)
     if not allow_write:
         return packets
     if controller is None:
@@ -82,3 +82,37 @@ def apply(states: dict[str, ZoneState], *, allow_write: bool = False,
     except OSError as exc:
         raise DeviceError(f"{controller.info.path}: {exc}") from exc
     return packets
+
+
+def read_state(fallback: dict[str, ZoneState], controller: Controller | None = None) -> dict[str, ZoneState]:
+    """Current state read from the controller (cc 60, then GET_REPORT 0xCC)."""
+    if controller is None:
+        found = find_controllers()
+        if not found:
+            raise DeviceNotFound("No Legion Tower lighting controller (17ef:c955) found")
+        controller = found[0]
+    try:
+        with hidraw.Hidraw(controller.info.path) as dev:
+            dev.send_feature(protocol.build_read())
+            time.sleep(PACKET_GAP_S)
+            reply = dev.get_feature(protocol.REPORT_ID, protocol.PACKET_LENGTH)
+    except PermissionError as exc:
+        raise DevicePermissionError(
+            f"No permission on {controller.info.path}: install the udev rule "
+            "(sudo ./install-udev.sh)") from exc
+    except OSError as exc:
+        raise DeviceError(f"{controller.info.path}: {exc}") from exc
+    try:
+        return protocol.states_from_read(protocol.parse_read(reply), fallback)
+    except ValueError as exc:
+        raise DeviceError(str(exc)) from exc
+
+
+def current_state() -> tuple[dict[str, ZoneState], str]:
+    """Best known state and where it came from ("device" or "saved")."""
+    from . import config
+    saved = config.load_state()
+    try:
+        return read_state(saved), "device"
+    except DeviceError:
+        return saved, "saved"

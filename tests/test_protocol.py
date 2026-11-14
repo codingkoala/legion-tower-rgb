@@ -1,7 +1,7 @@
 import unittest
 
 from legion_tower_rgb import hidraw, protocol
-from legion_tower_rgb.protocol import EFFECTS_BY_KEY, ZONES_BY_KEY, ZoneState
+from legion_tower_rgb.protocol import EFFECTS_BY_KEY, PANELS_BY_KEY, ZONES_BY_KEY, ZoneState
 
 # Report descriptor read from /sys on a Legion T5 26ARA8 (17ef:c955).
 T5_26ARA8_DESCRIPTOR = bytes.fromhex(
@@ -40,6 +40,59 @@ class PacketTest(unittest.TestCase):
         p = protocol.build_zone(ZONES_BY_KEY["ambient"],
                                 ZoneState(EFFECTS_BY_KEY["breathing"], 2, 4, (0, 0xD3, 0xFE)))
         self.assertEqual(p[:8].hex(), "cc1803020400d3fe")
+
+    def test_meteor_cycle_matches_capture(self):
+        # lights_fx capture: CPU fan meteor cycle, then back to rainbow.
+        default = protocol.vantage_default()
+        cycle = protocol.set_panel(default, PANELS_BY_KEY["cpu-fan"], effect=EFFECTS_BY_KEY["meteor-cycle"])
+        heads = [p.rstrip(b"\x00").hex() for p in protocol.build_apply(cycle, default)]
+        self.assertEqual(heads[1][:8], "cc130b02")
+        self.assertEqual(heads[8:], ["cc41ff", "cc4201", "cc2dffff", "cc5e"])
+        back = protocol.set_panel(cycle, PANELS_BY_KEY["cpu-fan"], effect=EFFECTS_BY_KEY["rainbow"])
+        heads = [p.rstrip(b"\x00").hex() for p in protocol.build_apply(back, cycle)]
+        self.assertEqual(heads[0], "cc42")
+        self.assertEqual(heads[2][:8], "cc130902")
+        self.assertEqual(heads[-2:], ["cc2dffff", "cc5e"])
+
+    def test_sync_effect_spreads_except_ambient(self):
+        states = protocol.set_panel(protocol.vantage_default(), PANELS_BY_KEY["cpu-fan"],
+                                    effect=EFFECTS_BY_KEY["wave"])
+        self.assertEqual(states["ambient"].effect.key, "static")
+        self.assertTrue(all(states[z.key].effect.key == "wave" for z in protocol.ZONES if z.key != "ambient"))
+
+    def test_ambient_has_basic_effects_only(self):
+        with self.assertRaises(ValueError):
+            protocol.set_panel(protocol.vantage_default(), PANELS_BY_KEY["ambient"], effect=EFFECTS_BY_KEY["wave"])
+
+    def test_parse_read_reply(self):
+        # Reply captured on the T5 26ARA8 after setting ambient static, brightness 1, ff0000.
+        reply = bytes.fromhex(
+            "cc0109000009020300d3fe09020300d3fe09020300d3fe09020300d3fe09020300d3fe"
+            "09020300d3fe090104000000090203ff0000010201ff00000000000000")
+        entries = protocol.parse_read(reply)
+        self.assertEqual([e.zone_code for e in entries], list(range(0x10, 0x19)))
+        states = protocol.states_from_read(entries, protocol.vantage_default())
+        amb = states["ambient"]
+        self.assertEqual((amb.effect.key, amb.speed, amb.brightness, amb.rgb), ("static", 2, 1, (0xFF, 0, 0)))
+        self.assertEqual(states["logo"].rgb, (0xFF, 0, 0))
+        self.assertEqual(states["cpu-fan"].effect.key, "rainbow")
+
+    def test_read_keeps_cycle_variant_from_fallback(self):
+        fallback = protocol.set_panel(protocol.vantage_default(), PANELS_BY_KEY["cpu-fan"],
+                                      effect=EFFECTS_BY_KEY["meteor-cycle"])
+        reply = bytearray(64)
+        reply[:5] = bytes([0xCC, 0x01, 0x09, 0, 0])
+        for i in range(9):
+            reply[5 + i * 6:11 + i * 6] = bytes([0x09, 2, 3, 0, 0, 0])
+        reply[5 + 3 * 6] = 0x0B  # zone 0x13 = CPU fan
+        states = protocol.states_from_read(protocol.parse_read(bytes(reply)), fallback)
+        self.assertEqual(states["cpu-fan"].effect.key, "meteor-cycle")
+
+    def test_parse_read_rejects_stale_buffer(self):
+        # What a GET_REPORT returns without a preceding read command.
+        stale = bytes.fromhex("cc01cc03000040005a0901150026ff0075089510b100c00689ff09cca10185cc09")
+        with self.assertRaises(ValueError):
+            protocol.parse_read(stale)
 
     def test_requires_every_zone(self):
         states = protocol.vantage_default()

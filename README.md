@@ -12,7 +12,7 @@ the part Lenovo Vantage handles on Windows. Python, GTK4/libadwaita GUI and CLI.
 
 | Model | Controller | Zones |
 |---|---|---|
-| Legion T5 26ARA8 (MT 90UY) | ITE IT8297, USB `17ef:c955` | ambient, logo, 6 fans (CPU, rear, 2 front, 2 top) mapped; GPU not yet (not on this controller) |
+| Legion T5 26ARA8 (MT 90UY) | ITE IT8297, USB `17ef:c955` | ambient, logo, 6 fans (CPU, rear, 2 front, 2 top), all 12 effects; GPU not yet (WMI only) |
 
 ## Install
 
@@ -27,6 +27,7 @@ sudo ./install-udev.sh   # only needed for hardware writes
 ```sh
 legion-tower-rgb                                         # GUI
 legion-tower-rgb-cli detect                              # reads sysfs only
+legion-tower-rgb-cli status                              # reads the state from the controller
 legion-tower-rgb-cli set all breathing --color 00aaff    # dry run
 legion-tower-rgb-cli set cpu-fan static --write          # really sends
 ```
