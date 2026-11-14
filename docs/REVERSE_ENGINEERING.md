@@ -20,6 +20,27 @@ only protocol descriptions written in our own words.
 - WMI: WMI Explorer / `Get-CimClass -Namespace root\WMI` to list the Lenovo
   lighting classes and their methods.
 
+## Prior art: Lenovo Legion Toolkit (GPL-3.0, laptops)
+
+[LLT](https://github.com/LenovoLegionToolkit-Team/LenovoLegionToolkit) drives
+simple lights (panel logo, rear ports, white keyboard) through two WMI classes
+in `root\WMI`, which are good candidates for the tower's ambient strip and logo:
+
+- `LENOVO_LIGHTING_DATA`: one row per light, with `Lighting_ID`,
+  `Control_Interface`, `Lighting_Type`.
+- `LENOVO_LIGHTING_METHOD`: `Get_Lighting_Current_Status(Lighting_ID)` returns
+  `Current_State_Type`, `Current_Brightness_Level`;
+  `Set_Lighting_Current_Status(Lighting_ID, Current_State_Type, Current_Brightness_Level)`.
+
+LLT's laptop IDs (ID, interface, type): panel logo (3, 1, 0), rear ports
+(5, 1, 0), white keyboard (0, 0, 1). The tower's IDs are unknown: listing
+`LENOVO_LIGHTING_DATA` on Windows (read-only) answers that directly:
+
+```powershell
+Get-CimInstance -Namespace root\WMI -ClassName LENOVO_LIGHTING_DATA
+Get-CimClass -Namespace root\WMI -ClassName LENOVO_LIGHTING_METHOD | Select-Object -Expand CimClassMethods
+```
+
 ## 3. Cross-check on Linux (read-only)
 
 - `sudo cat /sys/bus/wmi/devices/05901221-D566-11D1-B2F0-00A0C9062910/bmof` and

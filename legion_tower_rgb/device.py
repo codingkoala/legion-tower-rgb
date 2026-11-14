@@ -7,10 +7,11 @@ front end (CLI and GUI) defaults to a dry run that only shows the packets.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from . import hidraw, protocol
-from .protocol import Effect, Zone
+from .protocol import ZoneState
 
 
 class DeviceError(Exception):
@@ -50,14 +51,17 @@ def find_controllers() -> list[Controller]:
             and protocol.REPORT_ID in hidraw.feature_reports(i.descriptor)]
 
 
-def set_mode(zone: Zone, effect: Effect, speed: int, brightness: int,
-             rgb: tuple[int, int, int], *, allow_write: bool = False,
-             controller: Controller | None = None) -> list[bytes]:
-    """Build the packets for a zone and, only if allow_write, send them.
+# Vantage leaves ~65 ms between packets; keep a similar gap.
+PACKET_GAP_S = 0.065
+
+
+def apply(states: dict[str, ZoneState], *, allow_write: bool = False,
+          controller: Controller | None = None) -> list[bytes]:
+    """Build the full update and, only if allow_write, send it.
 
     Returns the packets either way, so front ends can show what would be sent.
     """
-    packets = protocol.build_set_mode(zone, effect, speed, brightness, rgb)
+    packets = protocol.build_apply(states)
     if not allow_write:
         return packets
     if controller is None:
@@ -67,7 +71,9 @@ def set_mode(zone: Zone, effect: Effect, speed: int, brightness: int,
         controller = found[0]
     try:
         with hidraw.Hidraw(controller.info.path) as dev:
-            for p in packets:
+            for i, p in enumerate(packets):
+                if i:
+                    time.sleep(PACKET_GAP_S)
                 dev.send_feature(p)
     except PermissionError as exc:
         raise DevicePermissionError(

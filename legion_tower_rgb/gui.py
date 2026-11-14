@@ -14,33 +14,34 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
-from . import device, protocol  # noqa: E402
+from . import config, device, protocol  # noqa: E402
 
 APP_ID = "io.github.codingkoala.LegionTowerRGB"
 
 
 class ZoneGroup(Adw.PreferencesGroup):
-    def __init__(self, zone: protocol.Zone):
-        super().__init__(title=protocol.ZONE_TITLES[zone])
+    def __init__(self, zone: protocol.Zone, state: protocol.ZoneState):
+        title = zone.title if zone.verified else f"{zone.title} (unverified)"
+        super().__init__(title=title)
         self.zone = zone
 
         self.effect_row = Adw.ComboRow(title="Effect",
                                        model=Gtk.StringList.new([e.title for e in protocol.EFFECTS]))
+        self.effect_row.set_selected(protocol.EFFECTS.index(state.effect))
         self.effect_row.connect("notify::selected", lambda *_: self._sync_sensitivity())
         self.add(self.effect_row)
 
         self.color_button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False),
                                                   valign=Gtk.Align.CENTER)
-        red = Gdk.RGBA()
-        red.parse("#ff0000")
-        self.color_button.set_rgba(red)
+        color = Gdk.RGBA()
+        color.parse("#%02x%02x%02x" % state.rgb)
+        self.color_button.set_rgba(color)
         self.color_row = Adw.ActionRow(title="Color")
         self.color_row.add_suffix(self.color_button)
         self.add(self.color_row)
 
-        self.speed_row, self.speed = self._scale_row("Speed", protocol.SPEED_RANGE, protocol.SPEED_RANGE[0])
-        _row, self.brightness = self._scale_row("Brightness", protocol.BRIGHTNESS_RANGE,
-                                                protocol.BRIGHTNESS_RANGE[1])
+        self.speed_row, self.speed = self._scale_row("Speed", protocol.SPEED_RANGE, state.speed)
+        _row, self.brightness = self._scale_row("Brightness", protocol.BRIGHTNESS_RANGE, state.brightness)
         self._sync_sensitivity()
 
     def _scale_row(self, title: str, bounds: tuple[int, int], value: int) -> tuple[Adw.ActionRow, Gtk.Scale]:
@@ -70,6 +71,11 @@ class ZoneGroup(Adw.PreferencesGroup):
         c = self.color_button.get_rgba()
         return tuple(round(v * 255) for v in (c.red, c.green, c.blue))  # type: ignore[return-value]
 
+    @property
+    def state(self) -> protocol.ZoneState:
+        return protocol.ZoneState(self.effect, int(self.speed.get_value()),
+                                  int(self.brightness.get_value()), self.rgb)
+
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application):
@@ -88,12 +94,13 @@ class Window(Adw.ApplicationWindow):
         status.add(self.status_row)
         self.write_switch = Adw.SwitchRow(
             title="Hardware writes",
-            subtitle="Off: Apply only shows the packets. The protocol is not yet verified on every model.")
+            subtitle="Off: Apply only shows the packets. The protocol is only partly verified.")
         self.write_switch.connect("notify::active", self._on_write_toggled)
         status.add(self.write_switch)
         page.add(status)
 
-        self.zones = [ZoneGroup(z) for z in protocol.Zone]
+        saved = config.load_state()
+        self.zones = [ZoneGroup(z, saved[z.key]) for z in protocol.ZONES]
         for g in self.zones:
             page.add(g)
 
@@ -124,7 +131,7 @@ class Window(Adw.ApplicationWindow):
         dialog = Adw.AlertDialog(
             heading="Enable hardware writes?",
             body="Lighting commands will be sent to the controller. The protocol comes from "
-                 "OpenRGB and has not been verified on every Legion Tower model.")
+                 "USB captures of Lenovo Vantage and is only partly verified.")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("enable", "Enable")
         dialog.set_response_appearance("enable", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -133,16 +140,15 @@ class Window(Adw.ApplicationWindow):
 
     def _on_apply(self, _button) -> None:
         write = self.write_switch.get_active()
-        lines = []
+        states = {g.zone.key: g.state for g in self.zones}
         try:
-            for g in self.zones:
-                packets = device.set_mode(g.zone, g.effect, int(g.speed.get_value()),
-                                          int(g.brightness.get_value()), g.rgb, allow_write=write)
-                lines += [f"{protocol.ZONE_TITLES[g.zone]}: {protocol.hexdump(p)}" for p in packets]
+            packets = device.apply(states, allow_write=write)
         except (device.DeviceError, ValueError) as exc:
             self.toasts.add_toast(Adw.Toast(title=str(exc)))
             return
-        self.preview.set_label("\n".join(lines))
+        if write:
+            config.save_state(states)
+        self.preview.set_label("\n".join(protocol.hexdump(p) for p in packets))
         self.toasts.add_toast(Adw.Toast(title="Sent to the controller" if write else "Preview only: nothing sent"))
 
 

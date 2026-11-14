@@ -3,16 +3,16 @@
 Control the fan and ambient lighting of Lenovo Legion Tower desktops on Linux,
 the part Lenovo Vantage handles on Windows. Python, GTK4/libadwaita GUI and CLI.
 
-> **Status: early development.** The fan protocol comes from OpenRGB and has
-> not been verified on the Legion T5 26ARA8 yet. Every front end runs in
+> **Status: early development.** The protocol comes from USB captures of
+> Lenovo Vantage on a Legion T5 26ARA8 and is only partly mapped. Every front end runs in
 > **preview mode by default**: it shows the packets it would send and sends
 > nothing until you explicitly enable hardware writes.
 
 ## Supported hardware
 
-| Model | Controller | Fans | Ambient strip / logo |
-|---|---|---|---|
-| Legion T5 26ARA8 (MT 90UY) | ITE IT8297, USB `17ef:c955` | detected, protocol unverified | not yet (likely WMI) |
+| Model | Controller | Zones |
+|---|---|---|
+| Legion T5 26ARA8 (MT 90UY) | ITE IT8297, USB `17ef:c955` | ambient, logo, 6 fans (CPU, rear, 2 front, 2 top) mapped; GPU not yet (not on this controller) |
 
 ## Install
 
@@ -39,7 +39,7 @@ legion-tower-rgb-cli set cpu-fan static --write          # really sends
 
 ## Credits
 
-Fan protocol facts from [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB)'s
+Early protocol hints from [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB)'s
 `LenovoMotherboardController` (GPL-2.0-or-later). This project reimplements
 them; no OpenRGB code is copied.
 
