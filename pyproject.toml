@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legion-tower-rgb"
+version = "0.1.0"
+description = "RGB lighting control for Lenovo Legion Tower desktops on Linux (GTK4/libadwaita)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+# PyGObject (GTK4 + libadwaita) comes from the distribution:
+#   sudo apt install python3-gi gir1.2-adw-1
+
+[project.scripts]
+legion-tower-rgb = "legion_tower_rgb.gui:main"
+legion-tower-rgb-cli = "legion_tower_rgb.cli:main"
+
+[tool.setuptools]
+packages = ["legion_tower_rgb"]
