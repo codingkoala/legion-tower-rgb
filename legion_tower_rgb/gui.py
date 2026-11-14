@@ -16,12 +16,13 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
 from . import config, device, protocol  # noqa: E402
+from .preview import CasePreview  # noqa: E402
 
 APP_ID = "io.github.codingkoala.LegionTowerRGB"
 
 
 class PanelGroup(Adw.PreferencesGroup):
-    def __init__(self, panel: protocol.Panel, state: protocol.ZoneState):
+    def __init__(self, panel: protocol.Panel, state: protocol.ZoneState, on_change):
         super().__init__(title=panel.title)
         self.panel = panel
         self.effects = protocol.effects_for(panel)
@@ -30,7 +31,7 @@ class PanelGroup(Adw.PreferencesGroup):
                                        model=Gtk.StringList.new([e.title for e in self.effects]))
         if state.effect in self.effects:
             self.effect_row.set_selected(self.effects.index(state.effect))
-        self.effect_row.connect("notify::selected", lambda *_: self._sync_sensitivity())
+        self.effect_row.connect("notify::selected", lambda *_: (self._sync_sensitivity(), on_change()))
         self.add(self.effect_row)
 
         self.color_button = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False),
@@ -38,6 +39,7 @@ class PanelGroup(Adw.PreferencesGroup):
         color = Gdk.RGBA()
         color.parse("#%02x%02x%02x" % state.rgb)
         self.color_button.set_rgba(color)
+        self.color_button.connect("notify::rgba", lambda *_: on_change())
         self.color_row = Adw.ActionRow(title="Color")
         self.color_row.add_suffix(self.color_button)
         self.color_row.set_visible(panel.has_color)
@@ -45,6 +47,8 @@ class PanelGroup(Adw.PreferencesGroup):
 
         self.speed_row, self.speed = self._scale_row("Speed", protocol.SPEED_RANGE, state.speed)
         _row, self.brightness = self._scale_row("Brightness", protocol.BRIGHTNESS_RANGE, state.brightness)
+        for scale in (self.speed, self.brightness):
+            scale.connect("value-changed", lambda *_: on_change())
         self._sync_sensitivity()
 
     def _scale_row(self, title: str, bounds: tuple[int, int], value: int) -> tuple[Adw.ActionRow, Gtk.Scale]:
@@ -81,15 +85,22 @@ class PanelGroup(Adw.PreferencesGroup):
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application):
-        super().__init__(application=app, title="Legion Tower RGB", default_width=560, default_height=800)
+        super().__init__(application=app, title="Legion Tower RGB", default_width=1100, default_height=820)
         self.toasts = Adw.ToastOverlay()
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(Adw.HeaderBar())
         self.toasts.set_child(toolbar)
         self.set_content(self.toasts)
 
+        # Left: controller, case preview, Apply. Right: one group per light.
+        columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        toolbar.set_content(columns)
         page = Adw.PreferencesPage()
-        toolbar.set_content(page)
+        page.set_size_request(440, -1)
+        zones_page = Adw.PreferencesPage(hexpand=True)
+        columns.append(page)
+        columns.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        columns.append(zones_page)
 
         status = Adw.PreferencesGroup(title="Controller")
         self.status_row = Adw.ActionRow()
@@ -102,20 +113,45 @@ class Window(Adw.ApplicationWindow):
         page.add(status)
 
         self.states, self.state_source = device.current_state()
-        self.groups = [PanelGroup(p, self.states[p.zones[0]]) for p in protocol.PANELS]
+        preview_group = Adw.PreferencesGroup(title="Preview",
+                                             description="Approximation of the chosen settings")
+        self.case = CasePreview()
+        preview_group.add(self.case)
+        page.add(preview_group)
+
+        apply = Gtk.Button(label="Apply", css_classes=["suggested-action", "pill"],
+                           halign=Gtk.Align.CENTER, margin_top=12)
+        apply.connect("clicked", self._on_apply)
+        preview_group.add(apply)
+
+        self.groups = [PanelGroup(p, self.states[p.zones[0]], self._on_controls_changed)
+                       for p in protocol.PANELS]
         for g in self.groups:
-            page.add(g)
+            zones_page.add(g)
 
         preview = Adw.PreferencesGroup(title="Packets")
         self.preview = Gtk.Label(xalign=0, wrap=True, selectable=True, css_classes=["monospace", "dim-label"])
         preview.add(self.preview)
-        apply = Gtk.Button(label="Apply", css_classes=["suggested-action", "pill"],
-                           halign=Gtk.Align.CENTER, margin_top=12)
-        apply.connect("clicked", self._on_apply)
-        preview.add(apply)
         page.add(preview)
 
         self._refresh_status()
+        self._on_controls_changed()
+
+    def _states_from_controls(self) -> dict[str, protocol.ZoneState]:
+        states = dict(self.states)
+        # Sync effects (wave, spectrum) spread to every zone: apply them last
+        # so the other groups do not overwrite them.
+        for g in sorted(self.groups, key=lambda g: g.effect.sync):
+            states = g.apply_to(states)
+        return states
+
+    def _on_controls_changed(self) -> None:
+        if not hasattr(self, "groups") or len(self.groups) < len(protocol.PANELS):
+            return  # still building the window
+        try:
+            self.case.set_states(self._states_from_controls())
+        except ValueError:
+            pass
 
     def _refresh_status(self) -> None:
         found = device.find_controllers()
@@ -143,12 +179,8 @@ class Window(Adw.ApplicationWindow):
 
     def _on_apply(self, _button) -> None:
         write = self.write_switch.get_active()
-        states = dict(self.states)
         try:
-            # Sync effects (wave, spectrum) spread to every zone: apply them last
-            # so the other groups do not overwrite them.
-            for g in sorted(self.groups, key=lambda g: g.effect.sync):
-                states = g.apply_to(states)
+            states = self._states_from_controls()
             packets = device.apply(states, previous=self.states, allow_write=write)
         except (device.DeviceError, ValueError) as exc:
             self.toasts.add_toast(Adw.Toast(title=str(exc)))
